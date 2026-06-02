@@ -1,69 +1,47 @@
 import os
-
 import vertexai
 
+from google.cloud import secretmanager
+from google.oauth2.credentials import Credentials
+from googleapiclient.discovery import build
 from vertexai.generative_models import GenerativeModel
 
-from google.cloud import secretmanager
-
-from google.oauth2.credentials import Credentials
-
-from googleapiclient.discovery import build
-
-
-# =====================================================
-# CONFIG 
-# =====================================================
-
-FOLDER_ID = "1n-FT2x8aS-6WZ2aginmhNJYci3pbrDwi"
+# ==========================================
+# CONFIG
+# ==========================================
 
 PROJECT_ID = "code-doc-generator"
-
 LOCATION = "us-central1"
 
+FOLDER_ID = "TU_FOLDER_ID"
 
-# =====================================================
+# ==========================================
 # SECRET MANAGER
-# =====================================================
+# ==========================================
 
 def get_secret(secret_name):
-
     client = secretmanager.SecretManagerServiceClient()
 
-    secret_path = (
-        f"projects/{PROJECT_ID}/secrets/"
-        f"{secret_name}/versions/latest"
+    name = (
+        f"projects/{PROJECT_ID}"
+        f"/secrets/{secret_name}"
+        f"/versions/latest"
     )
 
     response = client.access_secret_version(
-        request={
-            "name": secret_path
-        }
+        request={"name": name}
     )
 
-    return response.payload.data.decode("utf-8")
+    return response.payload.data.decode("UTF-8")
 
 
-# =====================================================
-# READ OAUTH DATA
-# =====================================================
+CLIENT_ID = get_secret("GOOGLE_CLIENT_ID")
+CLIENT_SECRET = get_secret("GOOGLE_CLIENT_SECRET")
+REFRESH_TOKEN = get_secret("GOOGLE_REFRESH_TOKEN")
 
-CLIENT_ID = get_secret(
-    "GOOGLE_CLIENT_ID"
-)
-
-CLIENT_SECRET = get_secret(
-    "GOOGLE_CLIENT_SECRET"
-)
-
-REFRESH_TOKEN = get_secret(
-    "GOOGLE_REFRESH_TOKEN"
-)
-
-
-# =====================================================
-# GOOGLE DOCS AUTH
-# =====================================================
+# ==========================================
+# GOOGLE AUTH
+# ==========================================
 
 creds = Credentials(
     token=None,
@@ -73,8 +51,8 @@ creds = Credentials(
     client_secret=CLIENT_SECRET,
     scopes=[
         "https://www.googleapis.com/auth/documents",
-        "https://www.googleapis.com/auth/drive"
-    ]
+        "https://www.googleapis.com/auth/drive",
+    ],
 )
 
 docs_service = build(
@@ -89,70 +67,70 @@ drive_service = build(
     credentials=creds
 )
 
-
-# =====================================================
-# READ PROJECT FILES
-# =====================================================
-
-project_files = []
-
-for root, dirs, files in os.walk("."):
-
-    for file in files:
-
-        if file.endswith(".py"):
-
-            path = os.path.join(
-                root,
-                file
-            )
-
-            try:
-
-                with open(
-                    path,
-                    "r",
-                    encoding="utf-8"
-                ) as f:
-
-                    content = f.read()
-
-                project_files.append(
-                    f"""
-FILE: {path}
-
-{content}
-"""
-                )
-
-            except Exception:
-                pass
-
-
-code_context = "\n\n".join(
-    project_files
-)
-
-
-# =====================================================
+# ==========================================
 # VERTEX AI
-# =====================================================
+# ==========================================
 
 vertexai.init(
     project=PROJECT_ID,
     location=LOCATION
 )
 
-model = GenerativeModel(
-    "gemini-2.5-pro"
-)
+model = GenerativeModel("gemini-2.5-pro")
+
+# ==========================================
+# READ PROJECT FILES
+# ==========================================
+
+project_files = []
+
+for root, dirs, files in os.walk("."):
+
+    if ".git" in root:
+        continue
+
+    if "venv" in root:
+        continue
+
+    if "__pycache__" in root:
+        continue
+
+    for file in files:
+
+        if not file.endswith(".py"):
+            continue
+
+        path = os.path.join(root, file)
+
+        try:
+
+            with open(
+                path,
+                "r",
+                encoding="utf-8"
+            ) as f:
+
+                content = f.read()
+
+            project_files.append(
+                f"\n\n### FILE: {path}\n\n{content}"
+            )
+
+        except Exception as e:
+            print(f"Error leyendo {path}: {e}")
+
+code_context = "\n".join(project_files)
+
+print(f"Archivos encontrados: {len(project_files)}")
+
+# ==========================================
+# PROMPT
+# ==========================================
 
 prompt = f"""
-Analiza el siguiente proyecto.
+Analiza el siguiente proyecto Python.
 
-Genera documentación técnica profesional.
-
-Incluye:
+Genera una documentación profesional con:
 
 1. Objetivo
 2. Arquitectura
@@ -172,16 +150,50 @@ Código:
 {code_context}
 """
 
+# ==========================================
+# GEMINI RESPONSE
+# ==========================================
+
 response = model.generate_content(
-    prompt
+    prompt,
+    generation_config={
+        "temperature": 0.2,
+        "max_output_tokens": 8192,
+    },
 )
 
-documentation = response.text
+def extract_text(response):
 
+    result = ""
 
-# =====================================================
+    if not response.candidates:
+        return result
+
+    for candidate in response.candidates:
+
+        if not candidate.content:
+            continue
+
+        for part in candidate.content.parts:
+
+            try:
+                if hasattr(part, "text"):
+                    result += part.text
+            except:
+                pass
+
+    return result
+
+documentation = extract_text(response)
+
+print(
+    f"Documentación generada: "
+    f"{len(documentation)} caracteres"
+)
+
+# ==========================================
 # CREATE GOOGLE DOC
-# =====================================================
+# ==========================================
 
 document = docs_service.documents().create(
     body={
@@ -190,6 +202,13 @@ document = docs_service.documents().create(
 ).execute()
 
 document_id = document["documentId"]
+
+print("Documento creado:")
+print(document_id)
+
+# ==========================================
+# INSERT CONTENT
+# ==========================================
 
 docs_service.documents().batchUpdate(
     documentId=document_id,
@@ -207,39 +226,40 @@ docs_service.documents().batchUpdate(
     }
 ).execute()
 
+print("Contenido insertado")
 
-# =====================================================
-# MOVE DOC TO FOLDER
-# =====================================================
+# ==========================================
+# MOVE TO FOLDER
+# ==========================================
 
-file_data = drive_service.files().get(
+file = drive_service.files().get(
     fileId=document_id,
     fields="parents"
 ).execute()
 
 previous_parents = ",".join(
-    file_data.get(
-        "parents",
-        []
-    )
+    file.get("parents", [])
 )
 
 drive_service.files().update(
     fileId=document_id,
     addParents=FOLDER_ID,
     removeParents=previous_parents,
-    fields="id, parents"
+    fields="id, parents",
 ).execute()
 
+# ==========================================
+# RESULT
+# ==========================================
 
-# =====================================================
-# OUTPUT
-# =====================================================
-
-print(
-    f"Google Doc creado correctamente"
+doc_url = (
+    f"https://docs.google.com/document/d/"
+    f"{document_id}/edit"
 )
 
-print(
-    f"https://docs.google.com/document/d/{document_id}/edit"
-)
+print()
+print("===================================")
+print("DOCUMENTO GENERADO")
+print("===================================")
+print(doc_url)
+print("===================================")
