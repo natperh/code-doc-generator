@@ -7,5 +7,9 @@ steps:
   args:
     - -c
     - |
-      pip install google-cloud-aiplatform
+      pip install \
+        google-cloud-aiplatform \
+        google-api-python-client \
+        google-auth
+
       python main.py
