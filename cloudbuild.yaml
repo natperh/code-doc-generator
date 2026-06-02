@@ -9,7 +9,9 @@ steps:
     - |
       pip install \
         google-cloud-aiplatform \
+        google-cloud-secret-manager \
         google-api-python-client \
+        google-auth-oauthlib \
         google-auth
 
       python main.py
