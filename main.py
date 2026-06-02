@@ -79,16 +79,9 @@ Path("README_GENERATED.md").write_text(
 
 from google.auth import default
 from googleapiclient.discovery import build
-
-FOLDER_ID = "1n-FT2x8aS-6WZ2aginmhNJYci3pbrDwi"
+from googleapiclient.http import MediaInMemoryUpload
 
 credentials, _ = default()
-
-docs_service = build(
-    "docs",
-    "v1",
-    credentials=credentials
-)
 
 drive_service = build(
     "drive",
@@ -96,52 +89,20 @@ drive_service = build(
     credentials=credentials
 )
 
-# Crear documento
-document = docs_service.documents().create(
-    body={
-        "title": "Calculator Documentation"
-    }
-).execute()
+file_metadata = {
+    "name": "prueba.txt",
+    "parents": ["1n-FT2x8aS-6WZ2aginmhNJYci3pbrDwi"]
+}
 
-document_id = document["documentId"]
-
-# Insertar contenido
-docs_service.documents().batchUpdate(
-    documentId=document_id,
-    body={
-        "requests": [
-            {
-                "insertText": {
-                    "location": {
-                        "index": 1
-                    },
-                    "text": documentation
-                }
-            }
-        ]
-    }
-).execute()
-
-# Mover a carpeta
-file = drive_service.files().get(
-    fileId=document_id,
-    fields="parents"
-).execute()
-
-previous_parents = ",".join(
-    file.get("parents", [])
+media = MediaInMemoryUpload(
+    b"Hola desde Cloud Build",
+    mimetype="text/plain"
 )
 
-drive_service.files().update(
-    fileId=document_id,
-    addParents=FOLDER_ID,
-    removeParents=previous_parents,
-    fields="id, parents"
+file = drive_service.files().create(
+    body=file_metadata,
+    media_body=media,
+    fields="id"
 ).execute()
 
-print(
-    f"Google Doc creado: https://docs.google.com/document/d/{document_id}/edit"
-)
-
-print("README generado correctamente")
-print("Archivo: README_GENERATED.md")
+print("Archivo creado:", file["id"])
