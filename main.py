@@ -77,5 +77,71 @@ Path("README_GENERATED.md").write_text(
     encoding="utf-8"
 )
 
+from google.auth import default
+from googleapiclient.discovery import build
+
+FOLDER_ID = "1n-FT2x8aS-6WZ2aginmhNJYci3pbrDwi"
+
+credentials, _ = default()
+
+docs_service = build(
+    "docs",
+    "v1",
+    credentials=credentials
+)
+
+drive_service = build(
+    "drive",
+    "v3",
+    credentials=credentials
+)
+
+# Crear documento
+document = docs_service.documents().create(
+    body={
+        "title": "Calculator Documentation"
+    }
+).execute()
+
+document_id = document["documentId"]
+
+# Insertar contenido
+docs_service.documents().batchUpdate(
+    documentId=document_id,
+    body={
+        "requests": [
+            {
+                "insertText": {
+                    "location": {
+                        "index": 1
+                    },
+                    "text": documentation
+                }
+            }
+        ]
+    }
+).execute()
+
+# Mover a carpeta
+file = drive_service.files().get(
+    fileId=document_id,
+    fields="parents"
+).execute()
+
+previous_parents = ",".join(
+    file.get("parents", [])
+)
+
+drive_service.files().update(
+    fileId=document_id,
+    addParents=FOLDER_ID,
+    removeParents=previous_parents,
+    fields="id, parents"
+).execute()
+
+print(
+    f"Google Doc creado: https://docs.google.com/document/d/{document_id}/edit"
+)
+
 print("README generado correctamente")
 print("Archivo: README_GENERATED.md")
