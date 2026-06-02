@@ -1,12 +1,11 @@
+options:
+  logging: CLOUD_LOGGING_ONLY
+
 steps:
-
 - name: python:3.11
-
   entrypoint: bash
-
   args:
     - -c
     - |
       pip install google-cloud-aiplatform
-
       python main.py
