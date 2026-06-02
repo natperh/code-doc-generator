@@ -8,7 +8,7 @@ from vertexai.generative_models import GenerativeModel
 # CONFIG
 # ======================================
 
-PROJECT_ID = os.environ["PROJECT_ID"]
+PROJECT_ID = "code-doc-generator"
 LOCATION = "us-central1"
 
 # ======================================
