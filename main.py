@@ -1,25 +1,28 @@
 import os
-import vertexai
-
 from google.cloud import secretmanager
-from google.oauth2.credentials import Credentials
-from googleapiclient.discovery import build
+import vertexai
 from vertexai.generative_models import GenerativeModel
 
-# ==========================================
-# CONFIG
-# ==========================================
+from google.oauth2.credentials import Credentials
+from googleapiclient.discovery import build
+
+
+# ==================================================
+# CONFIGURACION
+# ==================================================
 
 PROJECT_ID = "code-doc-generator"
 LOCATION = "us-central1"
 
-FOLDER_ID = "TU_FOLDER_ID"
+SOURCE_FOLDER = "sample_project"
 
-# ==========================================
+
+# ==================================================
 # SECRET MANAGER
-# ==========================================
+# ==================================================
 
 def get_secret(secret_name):
+
     client = secretmanager.SecretManagerServiceClient()
 
     name = (
@@ -35,24 +38,24 @@ def get_secret(secret_name):
     return response.payload.data.decode("UTF-8")
 
 
+# ==================================================
+# OAUTH
+# ==================================================
+
 CLIENT_ID = get_secret("GOOGLE_CLIENT_ID")
 CLIENT_SECRET = get_secret("GOOGLE_CLIENT_SECRET")
 REFRESH_TOKEN = get_secret("GOOGLE_REFRESH_TOKEN")
 
-# ==========================================
-# GOOGLE AUTH
-# ==========================================
-
 creds = Credentials(
-    token=None,
+    None,
     refresh_token=REFRESH_TOKEN,
     token_uri="https://oauth2.googleapis.com/token",
     client_id=CLIENT_ID,
     client_secret=CLIENT_SECRET,
     scopes=[
         "https://www.googleapis.com/auth/documents",
-        "https://www.googleapis.com/auth/drive",
-    ],
+        "https://www.googleapis.com/auth/drive"
+    ]
 )
 
 docs_service = build(
@@ -61,15 +64,58 @@ docs_service = build(
     credentials=creds
 )
 
-drive_service = build(
-    "drive",
-    "v3",
-    credentials=creds
+
+# ==================================================
+# LEER PROYECTO
+# ==================================================
+
+project_files = []
+
+for root, dirs, files in os.walk(SOURCE_FOLDER):
+
+    for file in files:
+
+        if not file.endswith(".py"):
+            continue
+
+        full_path = os.path.join(root, file)
+
+        try:
+
+            with open(
+                full_path,
+                "r",
+                encoding="utf-8"
+            ) as f:
+
+                content = f.read()
+
+                project_files.append(
+                    f"""
+ARCHIVO:
+{full_path}
+
+CODIGO:
+{content}
+"""
+                )
+
+        except Exception as e:
+
+            print(
+                f"Error leyendo {full_path}: {e}"
+            )
+
+print(
+    f"Archivos encontrados: {len(project_files)}"
 )
 
-# ==========================================
+code_context = "\n\n".join(project_files)
+
+
+# ==================================================
 # VERTEX AI
-# ==========================================
+# ==================================================
 
 vertexai.init(
     project=PROJECT_ID,
@@ -78,59 +124,10 @@ vertexai.init(
 
 model = GenerativeModel("gemini-2.5-pro")
 
-# ==========================================
-# READ PROJECT FILES
-# ==========================================
-
-project_files = []
-
-for root, dirs, files in os.walk("."):
-
-    if ".git" in root:
-        continue
-
-    if "venv" in root:
-        continue
-
-    if "__pycache__" in root:
-        continue
-
-    for file in files:
-
-        if not file.endswith(".py"):
-            continue
-
-        path = os.path.join(root, file)
-
-        try:
-
-            with open(
-                path,
-                "r",
-                encoding="utf-8"
-            ) as f:
-
-                content = f.read()
-
-            project_files.append(
-                f"\n\n### FILE: {path}\n\n{content}"
-            )
-
-        except Exception as e:
-            print(f"Error leyendo {path}: {e}")
-
-code_context = "\n".join(project_files)
-
-print(f"Archivos encontrados: {len(project_files)}")
-
-# ==========================================
-# PROMPT
-# ==========================================
-
 prompt = f"""
-Analiza el siguiente proyecto Python.
+Analiza este proyecto Python.
 
-Genera una documentación profesional con:
+Genera documentación profesional con:
 
 1. Objetivo
 2. Arquitectura
@@ -145,70 +142,53 @@ Genera una documentación profesional con:
 11. Flujo principal
 12. Resumen ejecutivo
 
-Código:
+Codigo:
 
 {code_context}
 """
 
-# ==========================================
-# GEMINI RESPONSE
-# ==========================================
+response = model.generate_content(prompt)
 
-response = model.generate_content(
-    prompt,
-    generation_config={
-        "temperature": 0.2,
-        "max_output_tokens": 8192,
-    },
-)
 
-def extract_text(response):
+# ==================================================
+# EXTRAER RESPUESTA GEMINI
+# ==================================================
 
-    result = ""
+documentation = ""
 
-    if not response.candidates:
-        return result
+for candidate in response.candidates:
 
-    for candidate in response.candidates:
+    if not candidate.content.parts:
+        continue
 
-        if not candidate.content:
-            continue
+    for part in candidate.content.parts:
 
-        for part in candidate.content.parts:
+        if hasattr(part, "text"):
 
-            try:
-                if hasattr(part, "text"):
-                    result += part.text
-            except:
-                pass
+            documentation += part.text
 
-    return result
-
-documentation = extract_text(response)
 
 print(
     f"Documentación generada: "
     f"{len(documentation)} caracteres"
 )
 
-# ==========================================
-# CREATE GOOGLE DOC
-# ==========================================
+
+# ==================================================
+# CREAR GOOGLE DOC
+# ==================================================
 
 document = docs_service.documents().create(
     body={
-        "title": "Documentación Automática"
+        "title": "Documentacion Automatica"
     }
 ).execute()
 
 document_id = document["documentId"]
 
-print("Documento creado:")
-print(document_id)
-
-# ==========================================
-# INSERT CONTENT
-# ==========================================
+print(
+    f"Documento creado: {document_id}"
+)
 
 docs_service.documents().batchUpdate(
     documentId=document_id,
@@ -228,38 +208,15 @@ docs_service.documents().batchUpdate(
 
 print("Contenido insertado")
 
-# ==========================================
-# MOVE TO FOLDER
-# ==========================================
 
-file = drive_service.files().get(
-    fileId=document_id,
-    fields="parents"
-).execute()
+# ==================================================
+# URL FINAL
+# ==================================================
 
-previous_parents = ",".join(
-    file.get("parents", [])
+print(
+    "\nDocumento generado:\n"
 )
 
-drive_service.files().update(
-    fileId=document_id,
-    addParents=FOLDER_ID,
-    removeParents=previous_parents,
-    fields="id, parents",
-).execute()
-
-# ==========================================
-# RESULT
-# ==========================================
-
-doc_url = (
-    f"https://docs.google.com/document/d/"
-    f"{document_id}/edit"
+print(
+    f"https://docs.google.com/document/d/{document_id}/edit"
 )
-
-print()
-print("===================================")
-print("DOCUMENTO GENERADO")
-print("===================================")
-print(doc_url)
-print("===================================")
